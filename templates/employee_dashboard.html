@@ -101,7 +101,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid" style="padding-bottom: 4rem;">
+<div class="dashboard-wrapper">
     <div class="dashboard-header animate-fade-up">
         <div class="welcome-text">
             <i class="fas fa-hand-sparkles gradient-text"></i> Welcome, {{ user.profile.full_name }}!
@@ -120,8 +120,7 @@
             <div class="stat-value">
                 {% if today_attendance %}
                 <small style="color: var(--success-color);">Checked in at {{ today_attendance.check_in |
-                    date_format('%I:%M
-                    %p') }}</small>
+                    date_format('%I:%M %p') }}</small>
                 {% else %}
                 <small style="color: var(--danger-color);">Not checked in yet</small>
                 {% endif %}
@@ -142,8 +141,8 @@
             <div class="stat-icon success stat-glow-success d-flex align-items-center justify-content-center">
                 <i class="fas fa-wallet"></i>
             </div>
-            <div class="stat-value" style="font-size: 1.5rem;">₹{{ "{:,.0f}".format(user.profile.net_salary) if
-                user.profile.net_salary else '0' }}</div>
+            <div class="stat-value" style="font-size: 1.5rem;">₹{{ "{:,.0f}".format(user.profile.net_salary|default(0))
+                }}</div>
             <div class="stat-label">Monthly Net</div>
         </div>
     </div>
@@ -161,8 +160,7 @@
                     <div>
                         <p class="mb-0 small" style="color: #1e293b; font-weight: 500;">{{ n.message }}</p>
                         <small class="text-muted" style="font-size: 0.7rem;">{{ n.created_at | date_format('%d %b,
-                            %H:%M')
-                            }}</small>
+                            %H:%M') }}</small>
                     </div>
                     <form action="{{ url_for('read_notification', notif_id=n.id) }}" method="POST" class="notif-form">
                         <button type="submit" class="btn btn-link btn-sm text-muted p-0"><i
@@ -185,8 +183,7 @@
                     <p class="small mb-2" style="color: #64748b;">{{ ann.content }}</p>
                     <div class="d-flex justify-content-between align-items-center">
                         <small class="text-primary" style="font-size: 0.7rem;">{{ ann.created_at | date_format('%d %b
-                            %Y')
-                            }}</small>
+                            %Y') }}</small>
                         <span class="badge bg-primary" style="font-size: 0.6rem;">New</span>
                     </div>
                 </div>
@@ -211,7 +208,7 @@
                                 </span>
                             </div>
                             <div class="progress mb-2" style="height: 6px;">
-                                <div class="progress-bar" role="progressbar" style="width: {{ p.progress }}%;"></div>
+                                <div class="progress-bar" role="progressbar" style="width: {{ p.progress }}%"></div>
                             </div>
                             <div class="d-flex justify-content-between small text-muted">
                                 <span>Progress</span>
@@ -263,9 +260,7 @@
                         </div>
                         <div class="text-end">
                             <div class="text-primary">{{ record.check_in | date_format('%I:%M %p') if record.check_in
-                                else
-                                '--'
-                                }}</div>
+                                else '--' }}</div>
                             <small class="text-muted">In Time</small>
                         </div>
                     </li>
