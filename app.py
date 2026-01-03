@@ -6,6 +6,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 from functools import wraps
 import os
+import random
+import string
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key-here-change-in-production'
@@ -52,6 +54,113 @@ def add_notification(user_id, message, type='info'):
         "is_read": False,
         "created_at": datetime.utcnow()
     })
+
+# --- OTP & EMAIL SYSTEM ---
+
+def generate_otp():
+    """Generate a random 6-digit OTP"""
+    return ''.join(random.choices(string.digits, k=6))
+
+def store_otp(email, otp):
+    """Store OTP in database with 5-minute expiry"""
+    db.otps.delete_many({"email": email}) # Clear previous OTPs
+    db.otps.insert_one({
+        "email": email,
+        "otp": otp,
+        "created_at": datetime.utcnow(),
+        "expires_at": datetime.utcnow() + timedelta(minutes=5),
+        "attempts": 0
+    })
+
+def verify_otp_logic(email, otp):
+    """Verify OTP and return (is_valid, message)"""
+    otp_record = db.otps.find_one({"email": email})
+    
+    if not otp_record:
+        return False, "OTP not found. Please request a new one."
+    
+    if otp_record['attempts'] >= 3:
+        db.otps.delete_one({"_id": otp_record['_id']})
+        return False, "Too many failed attempts. Please request a new OTP."
+    
+    if datetime.utcnow() > otp_record['expires_at']:
+        db.otps.delete_one({"_id": otp_record['_id']})
+        return False, "OTP has expired. Please request a new one."
+    
+    if otp_record['otp'] != otp:
+        db.otps.update_one({"_id": otp_record['_id']}, {"$inc": {"attempts": 1}})
+        return False, "Invalid OTP. Please check and try again."
+    
+    # Valid OTP
+    db.otps.delete_one({"_id": otp_record['_id']})
+    return True, "Verified Successfully!"
+
+def send_notification_email(to_email, subject, message):
+    """Send professional notification email using Flask-Mail"""
+    try:
+        body = f"""
+        <html>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; padding: 20px;">
+            <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                <div style="background: linear-gradient(135deg, #6366f1, #8b5cf6); padding: 30px; text-align: center; color: white;">
+                    <h1 style="margin: 0; font-size: 24px;">HRMS Update</h1>
+                </div>
+                <div style="padding: 40px; color: #1e293b; line-height: 1.6;">
+                    <h2 style="color: #6366f1; margin-top: 0;">{subject}</h2>
+                    <p style="font-size: 16px;">{message}</p>
+                    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #f1f5f9; color: #64748b; font-size: 14px;">
+                        <p>Sent at: {datetime.now().strftime('%d %b %Y, %H:%M')}</p>
+                        <p>This is an automated system message. Please do not reply.</p>
+                    </div>
+                </div>
+                <div style="background: #f8fafc; padding: 20px; text-align: center; color: #94a3b8; font-size: 12px;">
+                    <p>© 2026 HRMS. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        msg = Message(subject=subject, recipients=[to_email], html=body)
+        mail.send(msg)
+        return True
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        return False
+
+def send_otp_email(email, otp, purpose="account verification"):
+    """Send OTP verification email with modern theme"""
+    subject = f"HRMS - Your Verification Code: {otp}"
+    try:
+        body = f"""
+        <html>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8fafc; padding: 20px;">
+            <div style="max-width: 500px; margin: 0 auto; background: white; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 15px rgba(0,0,0,0.1);">
+                <div style="background: linear-gradient(135deg, #6366f1, #8b5cf6); padding: 40px; text-align: center; color: white;">
+                    <div style="font-size: 40px; margin-bottom: 10px;">🔐</div>
+                    <h1 style="margin: 0; font-size: 24px; font-weight: 800;">Verify Your Account</h1>
+                </div>
+                <div style="padding: 40px; text-align: center; color: #1e293b;">
+                    <p style="font-size: 16px; color: #64748b;">Please use the code below to complete your {purpose}.</p>
+                    <div style="background: #f8faff; border: 2px dashed #6366f1; padding: 20px; margin: 30px 0; border-radius: 12px;">
+                        <h1 style="color: #6366f1; letter-spacing: 15px; margin: 0; font-size: 32px; font-weight: 900;">{otp}</h1>
+                    </div>
+                    <p style="font-size: 14px; color: #94a3b8;">This code will expire in 5 minutes for security reasons.</p>
+                </div>
+                <div style="background: #f8fafc; padding: 20px; text-align: center; color: #94a3b8; font-size: 12px;">
+                    <p>© 2026 HRMS. All rights reserved.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        msg = Message(subject=subject, recipients=[email], html=body)
+        mail.send(msg)
+        return True
+    except Exception as e:
+        print(f"Failed to send OTP email: {e}")
+        return False
+
+# --- END OTP & EMAIL SYSTEM ---
 
 # Helper for dot notation in templates
 class MongoObject:
@@ -164,15 +273,18 @@ def signup():
             flash('Employee ID already exists!', 'danger')
             return redirect(url_for('signup'))
         
-        hashed_password = generate_password_hash(password)
+        # Generate OTP
+        otp = generate_otp()
+        store_otp(email, otp)
         
-        # User document
-        user_data = {
+        # Store user data in session temporarily
+        session['pending_email'] = email
+        session['pending_user'] = {
             "employee_id": employee_id,
             "email": email,
-            "password": hashed_password,
+            "password": generate_password_hash(password),
             "role": role,
-            "is_verified": True,
+            "is_verified": False,
             "created_at": datetime.utcnow(),
             "profile": {
                 "full_name": full_name,
@@ -188,11 +300,64 @@ def signup():
             }
         }
         
-        db.users.insert_one(user_data)
-        flash('Registration successful! Please log in.', 'success')
-        return redirect(url_for('login'))
+        # Send OTP email
+        if send_otp_email(email, otp, "account verification"):
+            flash(f'Verification code sent to {email}. Please verify to complete registration.', 'info')
+            return redirect(url_for('verify_otp_page'))
+        else:
+            # Fallback if email fails
+            flash('Failed to send verification email. Please try again.', 'danger')
+            return redirect(url_for('signup'))
     
     return render_template('signup.html')
+
+@app.route('/verify-otp', methods=['GET', 'POST'])
+def verify_otp_page():
+    if request.method == 'POST':
+        email = session.get('pending_email')
+        otp = request.form.get('otp')
+        
+        if not email:
+            flash('Session expired. Please sign up again.', 'danger')
+            return redirect(url_for('signup'))
+        
+        is_valid, message = verify_otp_logic(email, otp)
+        
+        if is_valid:
+            # Complete registration
+            pending_user = session.get('pending_user')
+            if pending_user:
+                pending_user['is_verified'] = True
+                db.users.insert_one(pending_user)
+                # Send Welcome Email
+                send_notification_email(
+                    email, 
+                    "Welcome to HRMS! 🎉", 
+                    f"Hello {pending_user['profile']['full_name']}, your account has been successfully created. You can now login and explore your dashboard."
+                )
+                
+                # Cleanup session
+                session.pop('pending_email', None)
+                session.pop('pending_user', None)
+                
+                flash('Email verified! Your account is now active. Please sign in.', 'success')
+                return redirect(url_for('login'))
+        else:
+            flash(message, 'danger')
+    
+    return render_template('verify_otp.html')
+
+@app.route('/resend-otp', methods=['POST', 'GET'])
+def resend_otp():
+    email = session.get('pending_email')
+    if email:
+        otp = generate_otp()
+        store_otp(email, otp)
+        if send_otp_email(email, otp, "account verification"):
+            flash('A new verification code has been sent to your email.', 'info')
+        else:
+            flash('Failed to resend code. Please try again.', 'danger')
+    return redirect(url_for('verify_otp_page'))
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -423,6 +588,15 @@ def check_in():
         })
         
         flash(f'Checked in successfully at {now.strftime("%I:%M %p")}!', 'success')
+        
+        # Email Notification
+        user = db.users.find_one({"_id": user_id})
+        if user:
+            send_notification_email(
+                user['email'],
+                "Attendance Check-In Confirmation 🕒",
+                f"Hello {user['profile']['full_name']}, you have successfully checked in today at {now.strftime('%I:%M %p')}."
+            )
     except Exception as e:
         flash(f'Error checking in: {str(e)}', 'danger')
     
@@ -460,6 +634,15 @@ def check_out():
         )
         
         flash(f'Checked out successfully at {now.strftime("%I:%M %p")}! Total work hours: {round(hours, 2)}h', 'success')
+        
+        # Email Notification
+        user = db.users.find_one({"_id": user_id})
+        if user:
+            send_notification_email(
+                user['email'],
+                "Attendance Check-Out Confirmation 🕒",
+                f"Hello {user['profile']['full_name']}, you have successfully checked out today at {now.strftime('%I:%M %p')}. Total work hours recorded: {round(hours, 2)}h."
+            )
     except Exception as e:
         flash(f'Error checking out: {str(e)}', 'danger')
     
@@ -529,6 +712,16 @@ def apply_leave():
             "created_at": datetime.utcnow()
         })
         
+        # Email Notification for Admins/HR
+        admins = db.users.find({"role": {"$in": ["HR", "Administrator"]}})
+        employee_name = user_data['profile']['full_name']
+        for admin in admins:
+            send_notification_email(
+                admin['email'],
+                "New Leave Request Received 📋",
+                f"{employee_name} has requested {leave_type} leave from {start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}. Reason: {reason}"
+            )
+        
         flash('Leave request submitted successfully!', 'success')
         return redirect(url_for('leave'))
     
@@ -569,6 +762,16 @@ def approve_leave(leave_id):
         curr += timedelta(days=1)
     
     flash('Leave request approved!', 'success')
+    
+    # Email Notification for Employee
+    employee = db.users.find_one({"_id": leave_request['user_id']})
+    if employee:
+        send_notification_email(
+            employee['email'],
+            "Leave Request Approved ✅",
+            f"Your {leave_request['leave_type']} leave request from {leave_request['start_date'].strftime('%d %b')} to {leave_request['end_date'].strftime('%d %b')} has been approved by the Administrator."
+        )
+    
     return redirect(url_for('leave'))
 
 @app.route('/leave/reject/<string:leave_id>', methods=['POST'])
@@ -587,7 +790,17 @@ def reject_leave(leave_id):
     # Add Notification for Employee
     add_notification(leave_request['user_id'], f"Your leave request for {leave_request['start_date'].strftime('%d %b')} has been Rejected.", "danger")
     
-    flash('Leave request rejected!', 'info')
+    # Email Notification for Employee
+    employee = db.users.find_one({"_id": leave_request['user_id']})
+    if employee:
+        comment = request.form.get('comment', 'No specific reason provided.')
+        send_notification_email(
+            employee['email'],
+            "Leave Request Rejected ❌",
+            f"Your {leave_request['leave_type']} leave request from {leave_request['start_date'].strftime('%d %b')} has been rejected. Reason/Comment: {comment}"
+        )
+    
+    flash('Leave request rejected!', 'warning')
     return redirect(url_for('leave'))
 
 # New Features Routes
@@ -602,6 +815,15 @@ def add_announcement():
         "content": content,
         "created_at": datetime.utcnow()
     })
+    
+    # Email Notification for All Employees
+    employees = db.users.find({"role": "Employee"})
+    for emp in employees:
+        send_notification_email(
+            emp['email'],
+            f"New Announcement: {title} 📢",
+            content
+        )
     
     flash('Announcement posted successfully!', 'success')
     return redirect(url_for('dashboard'))
@@ -659,6 +881,16 @@ def add_holiday():
         "date": date,
         "created_at": datetime.utcnow()
     })
+    
+    # Email Notification for All Employees
+    employees = db.users.find({"role": "Employee"})
+    for emp in employees:
+        send_notification_email(
+            emp['email'],
+            f"New Holiday Announced: {name} 🏖️",
+            f"A new holiday has been added to the calendar: {name} on {date.strftime('%d %b %Y')}. Enjoy your time off!"
+        )
+    
     flash('Holiday added successfully!', 'success')
     return redirect(url_for('holidays'))
 
@@ -697,6 +929,17 @@ def apply_expense():
     })
     
     add_notification(session['user_id'], f"Expense claim for ₹{amount} submitted.", "info")
+    
+    # Email Notification for Admins/HR
+    user = db.users.find_one({"_id": ObjectId(session['user_id'])})
+    admins = db.users.find({"role": {"$in": ["HR", "Administrator"]}})
+    for admin in admins:
+        send_notification_email(
+            admin['email'],
+            f"New Expense Claim: ₹{amount} 💸",
+            f"Employee {user['profile']['full_name']} has submitted a new expense claim for ₹{amount} under the category '{category}'. Description: {description}"
+        )
+    
     flash('Expense claim submitted successfully!', 'success')
     return redirect(url_for('expenses'))
 
@@ -713,6 +956,16 @@ def expense_action(expense_id, action):
     )
     
     add_notification(expense['user_id'], f"Your expense claim for ₹{expense['amount']} has been {status}.", "success" if action == 'approve' else "danger")
+    
+    # Email Notification for Employee
+    employee = db.users.find_one({"_id": expense['user_id']})
+    if employee:
+        send_notification_email(
+            employee['email'],
+            f"Expense Claim {status} {'✅' if action == 'approve' else '❌'}",
+            f"Hello {employee['profile']['full_name']}, your expense claim for ₹{expense['amount']} ({expense['category']}) has been {status}. Admin Comment: {comment}"
+        )
+    
     flash(f'Expense {status.lower()} successfully!', 'success')
     return redirect(url_for('expenses'))
 
@@ -746,6 +999,16 @@ def add_performance_review():
     })
     
     add_notification(emp_id, "A new performance review has been posted for you.", "success")
+    
+    # Email Notification for Employee
+    employee = db.users.find_one({"_id": ObjectId(emp_id)})
+    if employee:
+        send_notification_email(
+            employee['email'],
+            "New Performance Review Posted ⭐",
+            f"Hello {employee['profile']['full_name']}, a new performance review has been added to your profile with a rating of {rating}/5.\nFeedback: {feedback}"
+        )
+    
     flash('Performance review added!', 'success')
     return redirect(url_for('performance'))
 
@@ -895,6 +1158,15 @@ def update_payroll(employee_id):
         }}
     )
     
+    # Email Notification for Employee
+    employee = db.users.find_one({"_id": ObjectId(employee_id)})
+    if employee:
+        send_notification_email(
+            employee['email'],
+            "Payroll Information Updated 💰",
+            f"Hello {employee['profile']['full_name']}, your payroll details have been updated. New Net Salary: ₹{net:,.2f}. Please login to your dashboard for details."
+        )
+    
     flash('Payroll updated successfully!', 'success')
     return redirect(url_for('payroll'))
 
@@ -918,6 +1190,16 @@ def update_user_role(uid):
         {"_id": ObjectId(uid)},
         {"$set": {"role": new_role}}
     )
+    
+    # Email Notification
+    user = db.users.find_one({"_id": ObjectId(uid)})
+    if user:
+        send_notification_email(
+            user['email'],
+            "Your Account Role has been Updated 👤",
+            f"Hello {user['profile']['full_name']}, your access role in HRMS has been changed to '{new_role}'. Please re-login to see the changes."
+        )
+    
     flash('User role updated successfully.', 'success')
     return redirect(url_for('manage_users'))
 
@@ -1088,6 +1370,16 @@ def add_project():
         "created_at": datetime.utcnow()
     })
     
+    # Email Notification for Team Members
+    for member_id in team_members:
+        member = db.users.find_one({"_id": ObjectId(member_id)})
+        if member:
+            send_notification_email(
+                member['email'],
+                f"Assigned to New Project: {name} 🚀",
+                f"Hello {member['profile']['full_name']}, you have been assigned to the new project '{name}'. Description: {description}. Deadline: {end_date.strftime('%d %b %Y')}."
+            )
+            
     flash('Project created successfully!', 'success')
     return redirect(url_for('projects'))
 
@@ -1102,6 +1394,18 @@ def update_project_status(project_id):
             {"_id": ObjectId(project_id)},
             {"$set": {"status": status, "progress": progress, "updated_at": datetime.utcnow()}}
         )
+        
+        # Email Notification for Team Members
+        project = db.projects.find_one({"_id": ObjectId(project_id)})
+        if project and 'team_members' in project:
+            for member_id in project['team_members']:
+                member = db.users.find_one({"_id": member_id})
+                if member:
+                    send_notification_email(
+                        member['email'],
+                        f"Project Status Updated: {project['name']} 📊",
+                        f"The status of project '{project['name']}' has been updated to '{status}' with {progress}% progress."
+                    )
         
         flash('Project updated successfully!', 'success')
     except Exception as e:
@@ -1140,6 +1444,12 @@ def add_project_update(project_id):
         admins = db.users.find({"role": {"$in": ["HR", "Administrator"]}})
         for admin in admins:
             add_notification(str(admin['_id']), f"{user['profile']['full_name']} added an update to {project['name']}", "info")
+            # Email Notification
+            send_notification_email(
+                admin['email'],
+                f"New Project Update: {project['name']} 📝",
+                f"Employee {user['profile']['full_name']} has submitted a work update for project '{project['name']}'.\nUpdate: {update_text}\nHours Worked: {hours_worked}"
+            )
         
         flash('Work update added successfully!', 'success')
     except Exception as e:
@@ -1170,6 +1480,15 @@ def add_policy():
         "effective_date": datetime.utcnow(),
         "created_at": datetime.utcnow()
     })
+    
+    # Email Notification for All Employees
+    employees = db.users.find({"role": "Employee"})
+    for emp in employees:
+        send_notification_email(
+            emp['email'],
+            f"New Company Policy: {title} 📜",
+            f"A new company policy '{title}' has been published under the category '{category}'. Please review it in your dashboard."
+        )
     
     flash('Policy added successfully!', 'success')
     return redirect(url_for('policies'))
@@ -1303,9 +1622,22 @@ def update_settings():
 @login_required
 @hr_required
 def email_system():
-    employees = list(db.users.find({"role": {"$in": ["Employee", "HR"]}}))
-    email_logs = list(db.email_logs.find({"sender_id": ObjectId(session['user_id'])}).sort("sent_at", -1).limit(10))
-    return render_template('email_system.html', employees=employees, email_logs=email_logs)
+    user = MongoObject(db.users.find_one({"_id": ObjectId(session['user_id'])}))
+    employees_data = list(db.users.find({"role": {"$in": ["Employee", "HR"]}}))
+    employees = [MongoObject(e) for e in employees_data]
+    email_logs_data = list(db.email_logs.find({"sender_id": ObjectId(session['user_id'])}).sort("sent_at", -1).limit(10))
+    
+    email_logs = []
+    for log in email_logs_data:
+        recipient_names = []
+        for rid in log.get('recipients', []):
+            ru = db.users.find_one({"_id": rid}, {"profile.full_name": 1})
+            if ru:
+                recipient_names.append(ru['profile']['full_name'])
+        log['recipient_names'] = ", ".join(recipient_names)
+        email_logs.append(MongoObject(log))
+        
+    return render_template('email_system.html', user=user, employees=employees, email_logs=email_logs)
 
 @app.route('/email/send', methods=['POST'])
 @admin_required
@@ -1318,10 +1650,16 @@ def send_email():
         
         # Get recipient emails
         recipient_emails = []
+        valid_recipients = []
         for emp_id in recipients:
-            emp = db.users.find_one({"_id": ObjectId(emp_id)})
-            if emp and emp.get('email'):
-                recipient_emails.append(emp['email'])
+            if not emp_id: continue # Skip empty IDs
+            try:
+                emp = db.users.find_one({"_id": ObjectId(emp_id)})
+                if emp and emp.get('email'):
+                    recipient_emails.append(emp['email'])
+                    valid_recipients.append(ObjectId(emp_id))
+            except:
+                continue
         
         if not recipient_emails:
             flash('No valid recipients found!', 'warning')
@@ -1354,7 +1692,7 @@ def send_email():
         # Log email in database
         db.email_logs.insert_one({
             "sender_id": ObjectId(session['user_id']),
-            "recipients": [ObjectId(r) for r in recipients],
+            "recipients": valid_recipients,
             "subject": subject,
             "body": body,
             "sent_at": datetime.utcnow(),

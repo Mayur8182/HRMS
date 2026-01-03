@@ -138,9 +138,25 @@
     </div>
 
     <div class="email-content">
+        <div class="dropdown mb-4 d-flex justify-content-end">
+            <button class="btn btn-outline-primary btn-sm rounded-pill" type="button" data-bs-toggle="modal"
+                data-bs-target="#historyModal">
+                <i class="fas fa-history me-1"></i> View Sent History
+            </button>
+        </div>
+
         <form action="{{ url_for('send_email') }}" method="POST" class="email-form" id="emailSendForm">
             <!-- Hidden inputs for recipients -->
             <div id="selectedRecipientsContainer"></div>
+
+            <div class="mb-4">
+                <label class="form-label small fw-bold text-muted">Recipients</label>
+                <div id="recipientBadges"
+                    class="d-flex flex-wrap gap-2 p-3 bg-light rounded-4 border-2 border-dashed border-primary-subtle min-vh-10"
+                    style="min-height: 60px;">
+                    <span class="text-muted small italic">No recipients selected...</span>
+                </div>
+            </div>
 
             <div class="mb-4">
                 <label class="form-label small fw-bold text-muted">Subject</label>
@@ -162,11 +178,54 @@
                             Report</label>
                     </div>
                 </div>
-                <button type="submit" class="btn btn-primary-custom" style="padding: 0.75rem 2.5rem;">
-                    <i class="fas fa-paper-plane me-2"></i> Send Now
+                <button type="submit" class="btn btn-primary-custom px-5 py-3 shadow-lg">
+                    <i class="fas fa-paper-plane me-2"></i> Send Broadcast
                 </button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- History Modal -->
+<div class="modal fade" id="historyModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 20px;">
+            <div class="modal-header border-0 p-4">
+                <h5 class="fw-bold mb-0">Recent Sent Emails</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-4">
+                {% if email_logs %}
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead class="bg-light">
+                            <tr>
+                                <th class="border-0 small text-muted">Date</th>
+                                <th class="border-0 small text-muted">Recipients</th>
+                                <th class="border-0 small text-muted">Subject</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for log in email_logs %}
+                            <tr>
+                                <td><small class="fw-bold">{{ log.sent_at|date_format('%d %b, %H:%M') }}</small></td>
+                                <td>
+                                    <div class="text-truncate" style="max-width: 200px;">{{ log.recipient_names }}</div>
+                                </td>
+                                <td>{{ log.subject }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-5">
+                    <i class="fas fa-history fa-3x text-light mb-3"></i>
+                    <p class="text-muted">No emails sent yet.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -194,15 +253,30 @@
 
     function updateRecipients() {
         const container = document.getElementById('selectedRecipientsContainer');
+        const badgeContainer = document.getElementById('recipientBadges');
         container.innerHTML = '';
+        badgeContainer.innerHTML = '';
 
         const selected = document.querySelectorAll('.employee-item.selected');
+
+        if (selected.length === 0) {
+            badgeContainer.innerHTML = '<span class="text-muted small italic">No recipients selected...</span>';
+            return;
+        }
+
         selected.forEach(s => {
             const input = document.createElement('input');
             input.type = 'hidden';
             input.name = 'recipients[]';
             input.value = s.getAttribute('data-id');
             container.appendChild(input);
+
+            // Create badge
+            const name = s.querySelector('h6').textContent;
+            const badge = document.createElement('span');
+            badge.className = 'badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-2 rounded-pill';
+            badge.innerHTML = `<i class="fas fa-user me-1"></i> ${name}`;
+            badgeContainer.appendChild(badge);
         });
     }
 
@@ -218,6 +292,10 @@
                 item.style.display = 'none';
             }
         });
+    });
+    // Focus subject on compose click
+    document.querySelector('.compose-btn').addEventListener('click', () => {
+        document.querySelector('input[name="subject"]').focus();
     });
 </script>
 {% endblock %}
